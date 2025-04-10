@@ -1,68 +1,54 @@
-
 #include "machine.h"
 #include "tape.h"
+#include "table.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
-struct cell {
-    enum Q q;
-    enum Σ s;
 
-    // Q X Σ -> (Q U halt) X Σ 
-    struct T t;
+
+struct table table = {
+    .rows = (struct row[]){
+        {q0, (struct cell[]){ // Detect first symbol
+            {Σ0, {.Q = q1, .Σ = B, .A = R}},
+            {Σ1, {.Q = q2, .Σ = B, .A = R}},
+            {B, {.H = accept, .Σ = B, .A = D}},
+        }, .size = 3},
+        {q1, (struct cell[]){ // Transport 0 right
+            {Σ0, {.Q = q1, .Σ = Σ0, .A = R}},
+            {Σ1, {.Q = q1, .Σ = Σ1, .A = R}},
+            {B, {.Q = q3, .Σ = B, .A = L}},
+        }, .size = 3},
+        {q2, (struct cell[]){  // Transport 1
+            {Σ0, {.Q = q2, .Σ = Σ0, .A = R}},
+            {Σ1, {.Q = q2, .Σ = Σ1, .A = R}},
+            {B, {.Q = q4, .Σ = B, .A = L}},
+        }, .size = 3},
+        {q3, (struct cell[]){ // check for 0
+            {Σ0, {.Q = q5, .Σ = B, .A = L}},
+            {Σ1, {.H = reject, .Σ = Σ1, .A = D}},
+            {B, {.H = accept, .Σ = B, .A = D}},
+        }, .size = 3},
+        {q4, (struct cell[]){ // check for 1
+            {Σ0, {.H = reject, .Σ = Σ0, .A = D}},
+            {Σ1, {.Q = q5, .Σ = B, .A = L}},
+            {B, {.H = accept, .Σ = B, .A = D}},
+        }, .size = 3},
+        {q5, (struct cell[]){ // Left transport
+            {Σ0, {.Q = q5, .Σ = Σ0, .A = L}},
+            {Σ1, {.Q = q5, .Σ = Σ1, .A = L}},
+            {B, {.Q = q0, .Σ = B, .A = R}},
+        }, .size = 3},
+        
+    },
+    .size = 6,
 };
 
-struct cell table[] = {
-    // q0
-    {q0, $, {q0, $, R}},
-    {q0, Σ0, {q0, Σ0, R}},
-    {q0, Σ1, {q1, ΣY, R}}, 
-    {q0, ΣX, {q0, ΣX, R}}, 
-    {q0, ΣY, {q0, ΣY, R}}, 
-    {q0, B, {q2, B, L}}, 
-
-
-    // q1
-    {q1, $, {q1, $, R}},
-    {q1, Σ0, {q0, ΣX, R}},
-    {q1, Σ1, {q1, Σ1, R}}, 
-    {q1, ΣX, {q1, ΣX, R}}, 
-    {q1, ΣY, {q1, ΣY, R}},
-    {q1, B, {q3, B, L}},
-
-    // q2
-    {q2, $, {.H = accept, .Σ = $, .A = D}},
-    {q2, Σ0, {q2, Σ0, L}},
-    {q2, Σ1, {q1, ΣY, R}}, 
-    {q2, ΣX, {q2, ΣX, L}}, 
-    {q2, ΣY, {q2, ΣY, L}},
-    {q2, B, {q2, B, L}},
-
-
-    // q3
-    {q3, $, {.H = reject, .Σ = $, .A = D}},
-    {q3, Σ0, {q0, ΣX, R}},
-    {q3, Σ1, {q3, Σ1, L}}, 
-    {q3, ΣX, {q3, ΣX, L}}, 
-    {q3, ΣY, {q3, ΣY, L}},
-    {q3, B, {q3, B, L}},
-};
-
-struct T match_table(enum Q q, enum Σ s) {
-    for (int i = 0; i < sizeof(table) / sizeof(struct cell); i++) {
-        if (table[i].q == q && table[i].s == s) {
-            return table[i].t;
-        }
-    }
-    // If no match found, return a default transition
-    return (struct T){.Q = q, .Σ = s, .A = D}; // Default to halt
-}
 
 struct T δ(enum Q q, enum Σ s) {  // Changed return type from void
     // Call the match_table function to get the transition
-    struct T transition = match_table(q, s);
+    struct T transition = match_table(q, s, &table);
     usleep(100);
 
     return transition;
@@ -116,21 +102,33 @@ enum halt run (struct M *m, struct tape *t) {
     }
 }
 
+#include <string.h>
 
 int main() {
     struct M m;
     m.q0 = q0;
 
     m.δ = δ;
-    struct tape* t = tape_init((enum Σ[]){
-        $,
-        Σ0,
-        Σ1,
-        Σ1,
-        Σ0,
-        Σ0,
-        Σ0,
-    }, 7);
+
+    store_table(&table, "table.txt");
+
+
+    char* tape_str = "0110110"; // Example input
+    int tape_size = strlen(tape_str); // Exclude null terminator
+    struct tape *t = tape_create(tape_size);
+    for (int i = 0; i < tape_size; i++) {
+        if (tape_str[i] == '0') {
+            t->tape[i] = Σ0;
+        } else if (tape_str[i] == '1') {
+            t->tape[i] = Σ1;
+        } else {
+            fprintf(stderr, "Invalid character in tape string: %c\n", tape_str[i]);
+            free(t);
+            return 1;
+        }
+    }
+
+    tape_print(t);
     
 
 
